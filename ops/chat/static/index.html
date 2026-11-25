@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#3f0e40">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TuriMath">
+<link rel="manifest" href="/static/manifest.json">
+<title>TuriMath</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/static/brand/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="ws"><img class="ws-logo" src="/static/brand/logo-256.png" alt="TuriMath logo"><span class="ws-name" id="ws-name">TuriMath</span></div>
+    <nav class="nav">
+      <ul id="view-list"><li data-view="office"><span class="hash">🏢</span>Office</li><li data-view="usage"><span class="hash">📊</span>Usage</li></ul>
+      <div class="section">Channels</div>
+      <ul id="channel-list"></ul>
+      <div class="section">Direct messages</div>
+      <ul id="dm-list"></ul>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <header class="head">
+      <button class="menu" id="menu" aria-label="Open sidebar">☰</button>
+      <div>
+        <div class="title" id="title"></div>
+        <div class="topic" id="topic"></div>
+      </div>
+    </header>
+    <div class="messages" id="messages"></div>
+    <div class="office hidden" id="office"><canvas id="office-canvas"></canvas></div>
+    <div class="usage hidden" id="usage"></div>
+    <div class="working" id="working"></div>
+    <form class="composer" id="composer">
+      <textarea id="input" rows="1" placeholder="Message"></textarea>
+      <button type="submit" aria-label="Send">➤</button>
+    </form>
+  </main>
+
+  <aside class="thread hidden" id="thread">
+    <header class="head">
+      <div>
+        <div class="title">Thread</div>
+        <div class="topic" id="thread-where"></div>
+      </div>
+      <button class="close" id="thread-close" aria-label="Close thread">✕</button>
+    </header>
+    <div class="messages" id="thread-messages"></div>
+    <div class="working" id="thread-working"></div>
+    <form class="composer" id="thread-composer">
+      <textarea id="thread-input" rows="1" placeholder="Reply…"></textarea>
+      <button type="submit" aria-label="Send reply">➤</button>
+    </form>
+  </aside>
+</div>
+<script src="/static/office.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
