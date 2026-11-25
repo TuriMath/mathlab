@@ -12,7 +12,7 @@ The Turi Math Factory is an agent swarm that turns human mathematics into machin
 
 ## Goal
 
-By end of May 2027, the factory has published 40 machine-checked theorems and a 200-task RL environment, with the founder spending no more than **1 hour a week**, on direction only. All targets are proposed starting points, to be revised after Phase 1.
+The factory's first goal: publish 40 machine-checked theorems and a 200-task RL environment, with the founder spending no more than **1 hour a week**, on direction only. All targets are proposed starting points, to be revised after Phase 1.
 
 **Core goals**
 
@@ -104,15 +104,15 @@ The early tiers are mostly already in Lean, so they test the pipeline; the real 
 
 ## Roadmap
 
-Four gated phases take the factory from an empty repo to the 6-month goal by end of May 2027. No phase starts until the gate before it passes. If a gate fails, the phase is extended rather than skipped. Phase 1 is the one most likely to run long, because statement locking and attempt budgets are still being tuned there.
+Four gated phases take the factory from an empty repo to the goal. No phase starts until the gate before it passes. If a gate fails, the phase is extended rather than skipped. Phase 1 is the one most likely to run long, because statement locking and attempt budgets are still being tuned there.
 
-| Phase | Dates | Work | Gate to pass |
-|---|---|---|---|
-| **0 · Setup** | Dec 1 – Dec 14, 2026 | Repo, pinned Lean and Mathlib, CI gate (no `sorry`, axioms check), statement lock. Agent roles live; one Tier 0 theorem taken end to end, including a blind A ↔ B equivalence proof | **Gate 0:** CI rejects a planted `sorry` and a planted extra axiom |
-| **1 · Calibration** | Dec 15, 2026 – Jan 31, 2027 | Tiers 0 and 1, about 15 theorems. Tune attempt budgets; test the statement-fidelity pipeline with deliberately wrong statements | **Gate 1:** 15 verified, and the pipeline catches the planted wrong statement |
-| **2 · Climb** | Feb – Mar 2027 | Tier 2: missing items from the 100 list. Theorem pages live on the Turi Labs site. First Mathlib PRs only if a Lean-literate author is on board (stretch) | **Gate 2:** 30 verified *(stretch: 5 Mathlib PRs submitted)* |
-| **3 · Contribute** | Apr – May 2027 | Tier 3 from the 1000+ list, plus the Tier 4 textbook chapter. Package 200 verified tasks as an RL environment | **Gate 3 (6-month goal):** 40 verified, RL environment runs *(stretch: 10 PRs submitted, 3 merged)* |
-| **4 · Beyond** | Jun 2027 onward | Tier 5 stretch work, with a hard budget. Hand tasks to the AI research factory; explore Lean proofs about TuriChips designs | — |
+| Phase | Work | Gate to pass |
+|---|---|---|
+| **0 · Setup** | Repo, pinned Lean and Mathlib, CI gate (no `sorry`, axioms check), statement lock. Agent roles live; one Tier 0 theorem taken end to end, including a blind A ↔ B equivalence proof | **Gate 0:** CI rejects a planted `sorry` and a planted extra axiom |
+| **1 · Calibration** | Tiers 0 and 1, about 15 theorems. Tune attempt budgets; test the statement-fidelity pipeline with deliberately wrong statements | **Gate 1:** 15 verified, and the pipeline catches the planted wrong statement |
+| **2 · Climb** | Tier 2: missing items from the 100 list. Theorem pages live on the Turi Labs site. First Mathlib PRs only if a Lean-literate author is on board (stretch) | **Gate 2:** 30 verified *(stretch: 5 Mathlib PRs submitted)* |
+| **3 · Contribute** | Tier 3 from the 1000+ list, plus the Tier 4 textbook chapter. Package 200 verified tasks as an RL environment | **Gate 3 (first goal):** 40 verified, RL environment runs *(stretch: 10 PRs submitted, 3 merged)* |
+| **4 · Beyond** | Tier 5 stretch work, with a hard budget. Hand tasks to the AI research factory; explore Lean proofs about TuriChips designs | — |
 
 v2 change from the original roadmap: Mathlib PR counts moved out of the gates into stretch targets, so a phase never blocks on work that needs a Lean-literate human. "Reviewer" is now the statement-fidelity pipeline.
 
@@ -134,7 +134,7 @@ The founder is never asked whether a statement or proof is correct.
 
 The headline number is verified theorems per week. Everything else exists to keep that number honest.
 
-| KPI | Target by May 2027 | How it is measured |
+| KPI | Target | How it is measured |
 |---|---|---|
 | Verified theorems (cumulative) | 40 | CI gate passes on main |
 | First-pass gate rate | ≥ 60% | Theorems that pass within their attempt budget ÷ theorems attempted |
