@@ -93,12 +93,12 @@ def task_prompt(t: dict, where: str, brief: str) -> str:
 def plan_prompt() -> str:
     return (
         "[task turn] Plan the queue\nThe dispatcher woke you because most of the team has nothing on the board.\n\n"
-        f"## Board\n{board_text()}\n\n## Roadmap (origin/main)\n{_show('docs/roadmap.md')[:8000]}\n\n"
+        f"## Board\n{board_text()}\n\n## Spec and ladder (vision.md on origin/main)\n{_show('vision.md')[:12000]}\n\n"
         f"## Recent company log\n{_log_lines(log.recent(30))}\n\n"
-        "Fill the queue with real, next-step work for the current chip: issues titled '<Name>: <task>' in the "
-        "chip repo, each small enough for one person and clear about what done means. Move the roadmap to the next "
-        "chip when the current one is released. Don't invent busywork; if nothing sensible is left, say so.\n\n"
-        "End with:\nHANDOFF:\n<what you queued and why>\nDONE: <issues filed, with refs>  or  IDLE"
+        f"Follow the plan playbook: keep 2-4 theorems in flight in {FACTORY['org']}/{FACTORY['work_repo']} "
+        "(issues 'Theorem: <name>' from docs/theorem-issue.md), and ask Sai only for direction when a phase gate "
+        "has passed. Don't invent busywork; if nothing sensible is left, say so.\n\n"
+        "End with:\nHANDOFF:\n<what you queued and why>\nDONE: <issues opened, with refs>  or  IDLE"
     )
 
 
