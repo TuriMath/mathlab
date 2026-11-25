@@ -7,6 +7,9 @@ Every poll reads the open issues and PRs of every repo in the factory org and tu
 - `review:<id>` label     -> review / break (reviewer; Beru's reviews are `break`, on Opus)
 - owned open issue        -> implement / spec (owner; Igris's issues are `spec`, on Opus)
 - approved + green + no sai-review -> merged by the dispatcher itself (`gh pr merge --merge`), no LLM.
+- theorem issue ("Theorem: ...")   -> one task per agent in STAGES[<its stage:* label>] (docs/pipeline.md);
+  formalizers drop out once their `formalized:a|b` label is on; `parked`/`verified` issues get no tasks.
+  When both formalized labels are on, the snapshot asks the dispatcher to move it to stage:equiv.
 
 Each task has a fingerprint of what should wake it. A waiting task only becomes ready when its fingerprint
 moves past done_fp (the fingerprint the first poll after its last turn saw, so the agent's own comments and
@@ -22,7 +25,7 @@ import re
 import subprocess
 
 import companylog as log
-from config import AGENTS, DISPATCH, ISSUE_KIND, REVIEW_KIND, TASK_KINDS
+from config import AGENTS, BLIND_PAIR, DEFAULT_ATTEMPTS, DISPATCH, FACTORY, ISSUE_KIND, PARKED_LABEL, REVIEW_KIND, STAGES, TASK_KINDS
 
 ORG = DISPATCH["org"]
 NAME_TO_ID = {v["name"].lower(): k for k, v in AGENTS.items()}
@@ -48,6 +51,75 @@ def owner_of_issue(issue) -> str | None:
             return m.group(1)
     m = re.match(r"\s*(\w+)\s*:", issue["title"])
     return NAME_TO_ID.get(m.group(1).lower()) if m else None
+
+
+THEOREM_TITLE = re.compile(r"\s*theorem\s*:", re.I)
+FORMALIZED = {BLIND_PAIR[0]: "formalized:a", BLIND_PAIR[1]: "formalized:b"}
+
+
+def stage_of(labels) -> str | None:
+    found = [lb[len("stage:"):] for lb in labels if lb.startswith("stage:")]
+    return found[0] if len(found) == 1 else None
+
+
+def budget_of(labels, kind) -> int:
+    for lb in labels:
+        m = re.fullmatch(r"budget:(\d+)", lb)
+        if m:
+            return int(m.group(1))
+    return DEFAULT_ATTEMPTS.get(kind, 0)
+
+
+def theorem_tasks(full: str, issue: dict, found: dict, advance: list):
+    """Tasks for one theorem issue, from its stage label (docs/pipeline.md)."""
+    labels = sorted(lb["name"] for lb in issue.get("labels", []))
+    if PARKED_LABEL in labels or "verified" in labels:
+        return
+    stage = stage_of(labels)
+    if stage == "formalize" and all(FORMALIZED[a] in labels for a in BLIND_PAIR):
+        advance.append({"repo": full, "number": issue["number"], "from": "formalize", "to": "equiv",
+                        "title": issue["title"]})
+        return
+    ref = f"{full}#{issue['number']}"
+    for agent, kind in STAGES.get(stage or "", []):
+        if kind == "formalize" and FORMALIZED.get(agent) in labels:
+            continue                     # this formalizer is done for this round
+        found[f"{agent}:issue:{ref}"] = dict(
+            owner=agent, role="issue", kind=kind, repo=full, ref=ref, number=issue["number"], title=issue["title"],
+            fp=json.dumps([len(issue.get("comments") or []), labels, issue["title"]]),
+            info={"theorem": True, "stage": stage, "budget": budget_of(labels, kind)})
+
+
+def set_stage(repo: str, number: int, old: str | None, new: str) -> bool:
+    args = ["issue", "edit", str(number), "-R", repo, "--add-label", f"stage:{new}"]
+    if old:
+        args += ["--remove-label", f"stage:{old}"]
+    return gh(*args, json_out=False) is not None
+
+
+def issue_labels(repo: str, number: int) -> list[str]:
+    i = gh("issue", "view", str(number), "-R", repo, "--json", "labels") or {}
+    return [lb["name"] for lb in i.get("labels", [])]
+
+
+def park(repo: str, number: int, reason: str) -> bool:
+    gh("issue", "comment", str(number), "-R", repo, "-b", f"⏸ **Parked by the dispatcher.** {reason}", json_out=False)
+    return gh("issue", "edit", str(number), "-R", repo, "--add-label", PARKED_LABEL, json_out=False) is not None
+
+
+def verify(repo: str, number: int, pr_ref: str) -> bool:
+    gh("issue", "edit", str(number), "-R", repo, "--add-label", "verified", "--remove-label", "stage:prove",
+       json_out=False)
+    return gh("issue", "close", str(number), "-R", repo, "-c",
+              f"✅ **Verified.** {pr_ref} merged with the gate green: Lean accepts the proof of the locked statement.",
+              json_out=False) is not None
+
+
+def theorem_of_branch(repo_full: str, branch: str) -> int | None:
+    """The theorem issue a prover branch belongs to: `<agent>/<repo>-<n>` in the work repo."""
+    name = repo_full.split("/")[1]
+    m = re.fullmatch(rf"\w+/{re.escape(name)}-(\d+)", branch or "")
+    return int(m.group(1)) if m and name == FACTORY["work_repo"] else None
 
 
 def author_of_pr(pr) -> str | None:
@@ -83,11 +155,12 @@ def ci_state(runs: list[dict] | None) -> str:
 
 # ---------- Snapshot ----------
 def snapshot() -> dict | None:
-    """{"tasks": {key: fields}, "merge": [prs], "sai_review": [prs]} or None if GitHub couldn't be read."""
+    """{"tasks": {key: fields}, "merge": [prs], "sai_review": [prs], "advance": [stage moves]} or None if GitHub
+    couldn't be read."""
     repos = gh("repo", "list", ORG, "--no-archived", "--json", "name", "--limit", "100")
     if repos is None:
         return None
-    found, merge, waiting = {}, [], []
+    found, merge, waiting, advance = {}, [], [], []
     for repo in repos:
         full = f"{ORG}/{repo['name']}"
         issues = gh("issue", "list", "-R", full, "--state", "open", "--limit", "100",
@@ -98,6 +171,9 @@ def snapshot() -> dict | None:
         if issues is None or prs is None or runs is None:
             return None                  # a partial read would close tasks that still exist
         for i in issues:
+            if THEOREM_TITLE.match(i["title"]):
+                theorem_tasks(full, i, found, advance)
+                continue
             owner = owner_of_issue(i)
             if not owner:
                 continue
@@ -135,8 +211,8 @@ def snapshot() -> dict | None:
                 waiting.append({"ref": ref, "title": p["title"], "ci": ci})
             elif "approved" in labels and ci in ("green", "none") and p.get("mergeable") == "MERGEABLE":
                 merge.append({"repo": full, "number": p["number"], "ref": ref, "title": p["title"],
-                              "author": author})
-    return {"tasks": found, "merge": merge, "sai_review": waiting}
+                              "author": author, "branch": p["headRefName"]})
+    return {"tasks": found, "merge": merge, "sai_review": waiting, "advance": advance}
 
 
 # ---------- Board sync ----------

@@ -43,11 +43,13 @@ Hilbert opens issue ──► stage:formalize ──► stage:equiv ──► G�
 ```
 
 1. **formalize.** Noether and Gauss each get a task. Each writes its statement on its own branch (`noether/theorems-<n>`, `gauss/theorems-<n>`), pushes, and adds `formalized:a` or `formalized:b` to the issue. **No PR**, and **never read the other formalizer's branch, files or comments about their statement.** When both labels are on, the dispatcher moves the issue to `stage:equiv` by itself.
-2. **equiv.** Euler merges both branches into `euler/theorems-<n>`, proves `A.Statement ↔ B.Statement` in `Equiv.lean`, adds `A.lean`'s hash to `locked.txt`, and opens one PR with `review:godel`.
+2. **equiv.** Euler merges both branches into `euler/theorems-<n>`, proves `A.Statement ↔ B.Statement` in `Equiv.lean`, adds the hashes of A, B and Equiv to `locked.txt`, and opens one PR with `review:godel`.
    - If they are **not** equivalent (Euler finds a counterexample or a missing hypothesis), Euler comments on the issue explaining the difference, removes both `formalized:*` labels and sets `stage:formalize` again. That is one round; rounds count against the budget.
 3. **critique.** Gödel reviews the A↔B PR (see `ops/chat/playbooks/critique.md`): back-translation by a subagent that never sees the source, the red-flag report, the sanity section, and a check that A and B were not copied from each other. Pass → `approved`. Fail → close the PR, comment on the issue with the reason and set `stage:formalize` again.
    When the A↔B PR merges (approved + CI green), **the dispatcher moves the issue to `stage:prove`**. From then on `A.lean` is locked: CI fails any change to it.
 4. **prove.** Euler proves `main : A.Statement` in `Proof.lean`, fills `data/tasks/<Slug>.json`, and opens a PR with `review:hilbert` (a light check: files, metadata, no stray changes; Lean does the real judging). When it merges, **the dispatcher adds `verified` and closes the issue.**
+
+**The equivalence must match, not prove.** Any two *true* statements are equivalent, so an `Equiv.lean` that proves A and B separately (e.g. by citing Mathlib's copy of the theorem) checks nothing. Each direction has to take the other side as its hypothesis and use it. Lean can't enforce this; Gödel checks it in every critique. This is the pipeline's known weak point, and the monthly planted-error test is what measures it.
 
 **Attempt budgets.** The dispatcher counts Euler's turns in `equiv` and in `prove`. When a stage uses up its budget without moving on, the dispatcher adds `parked` and comments with the last handoff. Parked theorems are published too.
 

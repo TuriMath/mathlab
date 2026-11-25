@@ -11,11 +11,19 @@ just now, its last handoff and the company-log slice for its ref. It runs in the
 task's own Claude session, so follow-ups resume where the work stopped. No turn cap; a turn quiet for
 `stall_seconds` gets one warning in #needs-sai and keeps running.
 
+Theorem pipeline (docs/pipeline.md): a theorem issue's stage label picks its agents (tasks.py). The dispatcher
+moves stages that need no judgement: formalize -> equiv when both formalizers are done, equiv -> prove when the
+A<->B PR merges, prove -> verified (issue closed) when the proof PR merges. Euler's equiv/prove turns count
+against the theorem's budget; a stage out of budget is parked instead of run. Every turn is also appended to the
+trace index (TRACES), keyed by Claude session id, so transcripts can be labelled later.
+
 Results: DONE posts to #work; BLOCKED-SAI to #needs-sai (only when it changed); IDLE and BLOCKED post nothing.
 An issue task that ended DONE continues after `continue_gap`; everything else waits until its GitHub fingerprint
 changes. Sai controls it with /pause, /resume and /status.
 """
 import asyncio
+import json
+from pathlib import Path
 import re
 import time
 import uuid
@@ -26,7 +34,7 @@ import db
 import seats
 import tasks
 import worktrees
-from config import AGENTS, DISPATCH, FACTORY, MODELS, PLANNER, SYSTEM, TASK_KINDS, WORKSPACE
+from config import AGENTS, DISPATCH, FACTORY, MODELS, PLANNER, RETRY_MODEL, SYSTEM, TASK_KINDS, WORKSPACE, env
 from runner import _show, company_prompt, run_turn
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -35,6 +43,9 @@ STATUS_LINE = re.compile(r"\W*(DONE|BLOCKED-SAI|BLOCKED|IDLE)\b", re.I)
 LIMIT_HIT = re.compile(r"hit your (?:weekly|5-hour|session|usage) limit|usage limit reached", re.I)
 REVIEW_TOOLS_OFF = ["Edit", "Write", "NotebookEdit", "Bash(git push:*)", "Bash(git commit:*)"]
 BREAK_TOOLS_OFF = ["Bash(git push:*)"]
+
+TRACES = Path(env("TRACES") or Path.home() / f".{FACTORY['slug']}-traces.jsonl")
+COUNTED = {"DONE", "BLOCKED", "BLOCKED-SAI"}   # turns that count as an attempt (IDLE is not an attempt)
 
 running: dict[str, str] = {}             # agent -> task key
 sai_queue: list[dict] = []
@@ -145,6 +156,8 @@ async def run_task(t: dict, seat: str):
     if own_light:
         working[agent] = {"channel": "work", "parent_id": None}
     model = MODELS[TASK_KINDS[kind]["model"]]
+    if kind in RETRY_MODEL and attempts(t) >= 1:
+        model = MODELS[RETRY_MODEL[kind]]
     try:
         if t["role"] == "plan":
             cwd, system, prompt, disallowed = None, None, plan_prompt(), None
@@ -192,6 +205,9 @@ def finish(t, seat, model, session, resume, answer, ok):
         return
     kind = result_kind(answer)
     report, handoff = report_of(answer), handoff_of(answer)
+    trace(t, seat, model, session, kind, report)
+    if kind in COUNTED and (t["info"] or {}).get("theorem") and t["kind"] in RETRY_MODEL:
+        db.kv_set(attempt_key(t), str(attempts(t) + 1))
     f = dict(last_result=kind, handoff=handoff or t["handoff"], turns=t["turns"] + 1, seat=seat, model=model,
              session_id=session, settle=1 if github else 0)
     if not github:
@@ -209,6 +225,69 @@ def finish(t, seat, model, session, resume, answer, ok):
     log.append("agent", f"turn-{kind.lower()}", report, repo=t["repo"], ref=t["ref"], actor=agent)
     if handoff:
         log.append("agent", "handoff", handoff, repo=t["repo"], ref=t["ref"], actor=agent)
+
+
+# ---------- Theorem pipeline ----------
+def attempt_key(t) -> str:
+    return f"attempts:{t['ref']}:{t['kind']}"
+
+
+def attempts(t) -> int:
+    return int(db.kv_get(attempt_key(t), "0") or 0)
+
+
+def out_of_budget(t) -> bool:
+    info = t["info"] or {}
+    return bool(info.get("theorem")) and t["kind"] in RETRY_MODEL and attempts(t) >= (info.get("budget") or 0) > 0
+
+
+def trace(t, seat, model, session, result, report):
+    """One line per finished turn: the label a transcript needs to become training data."""
+    rec = {"ts": time.time(), "task": t["key"], "agent": t["owner"], "kind": t["kind"], "ref": t["ref"],
+           "stage": (t["info"] or {}).get("stage"), "attempt": attempts(t) + 1, "session_id": session,
+           "seat": seat, "model": model, "result": result, "report": report[:500]}
+    try:
+        with TRACES.open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+    except OSError as e:
+        print(f"trace write failed: {e}", flush=True)
+
+
+async def park_task(t):
+    reason = (f"The {t['kind']} stage used its budget of {(t['info'] or {}).get('budget')} attempts without "
+              f"moving on. Last handoff:\n\n{t['handoff'] or '(none)'}")
+    if await asyncio.to_thread(tasks.park, t["repo"], t["number"], reason):
+        log.update(t["key"], status="done")
+        log.append("dispatcher", "parked", f"{t['title']}: {t['kind']} out of budget", repo=t["repo"], ref=t["ref"],
+                   actor=t["owner"])
+        db.add("work", SYSTEM["id"], f"DONE: parked {t['ref']} {t['title']} ({t['kind']} out of budget)")
+    else:
+        log.update(t["key"], status="ready", next_at=time.time() + 600)   # GitHub refused: try again later
+
+
+async def advance(a):
+    if await asyncio.to_thread(tasks.set_stage, a["repo"], a["number"], a["from"], a["to"]):
+        ref = f"{a['repo']}#{a['number']}"
+        log.append("dispatcher", "stage", f"{a['title']}: {a['from']} -> {a['to']}", repo=a["repo"], ref=ref)
+        db.add("work", SYSTEM["id"], f"DONE: {ref} {a['title']} moved to {a['to']} (both statements pushed)")
+
+
+async def after_merge(pr):
+    """equiv PR merged -> stage:prove (statement locked); proof PR merged -> verified, issue closed."""
+    n = tasks.theorem_of_branch(pr["repo"], pr.get("branch"))
+    if n is None:
+        return
+    labels = await asyncio.to_thread(tasks.issue_labels, pr["repo"], n)
+    ref = f"{pr['repo']}#{n}"
+    if "stage:equiv" in labels:
+        if await asyncio.to_thread(tasks.set_stage, pr["repo"], n, "equiv", "prove"):
+            log.append("dispatcher", "stage", f"statement locked by {pr['ref']}; equiv -> prove", repo=pr["repo"],
+                       ref=ref)
+            db.add("work", SYSTEM["id"], f"DONE: {ref} statement locked ({pr['ref']}), moved to prove")
+    elif "stage:prove" in labels:
+        if await asyncio.to_thread(tasks.verify, pr["repo"], n, pr["ref"]):
+            log.append("dispatcher", "verified", f"{ref} verified by {pr['ref']}", repo=pr["repo"], ref=ref)
+            db.add("work", SYSTEM["id"], f"DONE: ✅ {ref} verified ({pr['ref']})")
 
 
 # ---------- Loop ----------
@@ -236,6 +315,8 @@ async def poll():
     sai_queue[:] = snap["sai_review"]
     sai_review_digest()
     changed = tasks.sync(snap["tasks"])
+    for a in snap["advance"]:
+        await advance(a)
     for pr in snap["merge"]:
         await merge(pr)
     busy = {b for t in log.tasks() if (b := worktrees.branch_of(t))}
@@ -256,6 +337,10 @@ def dispatch():
             break
         if t["owner"] in running or paused():
             continue
+        if out_of_budget(t):
+            log.update(t["key"], status="running")       # not picked again while parking
+            asyncio.create_task(park_task(t))
+            continue
         seat = seats.pick(prefer=t["seat"], urgent=TASK_KINDS[t["kind"]]["urgent"])
         if seat is None:
             continue
@@ -272,6 +357,7 @@ async def merge(pr):
         log.append("dispatcher", "merged", f"Merged {pr['ref']} {pr['title']}", repo=pr["repo"], ref=pr["ref"],
                    actor=pr.get("author"))
         db.add("work", SYSTEM["id"], f"DONE: merged {pr['ref']} {pr['title']} (approved, CI green)")
+        await after_merge(pr)
     elif db.kv_get(key) != out:
         db.kv_set(key, out)
         log.append("dispatcher", "merge-failed", f"{pr['ref']}: {out}", repo=pr["repo"], ref=pr["ref"])
