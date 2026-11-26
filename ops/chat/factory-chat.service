@@ -11,7 +11,7 @@ Environment=PATH=/home/turimath/.local/bin:/home/turimath/.elan/bin:/usr/local/b
 # Localhost only: agents can run commands on this machine, so the app is never exposed publicly.
 ExecStart=/home/turimath/venv/bin/uvicorn app:app --host 127.0.0.1 --port 8601
 Restart=always
-# Port 8601: TuriChips has 8600 on the same VM. Tailscale serves it on port 8443.
+# Port 8601: TuriChips has 8600 on the same VM. The tailnet machine `turimath` (ops/tailscaled-turimath.service) serves it over HTTPS.
 # The VM is 2 vCPU / 8 GB today and also runs TuriChips and Halyard prod, so the caps below are
 # sized for that and MACHINE_MAX_RUNNING=1 in the env file. After the upgrade to 32 GB: MemoryHigh=12G,
 # MemoryMax=14G, MACHINE_MAX_RUNNING=3. Agents' jobs (Lean builds against Mathlib) run inside this

@@ -28,7 +28,8 @@ TuriMath shares the TuriChips VM as its own unix user, `turimath`. Everything pe
 - **Mathlib once:** `~/repos/theorems` is primed with `heavy lake exe cache get`. Every task worktree links its `.lake/packages` to that copy (`worktrees.share_lake`), so Mathlib is on disk once, not once per task.
 - Install the unit: `sudo cp factory-chat.service /etc/systemd/system/turimath-chat.service`, then `sudo systemctl enable --now turimath-chat`. Logs: `journalctl -u turimath-chat -f`
 - The app listens on `127.0.0.1:8601` only (TuriChips has 8600). Two ways in:
-  - Tailscale (web and phone): `sudo tailscale serve --bg --https=8443 8601`, then `https://<vm tailnet name>:8443`. The Android app in `ops/mobile` opens this URL.
+  - Tailscale (web and phone): TuriMath has its own tailnet machine, **`turimath`**, a second, userspace Tailscale node on the VM (`ops/tailscaled-turimath.service`; TuriChips keeps the system node). It serves the chat at `https://turimath.<tailnet>.ts.net`:
+    `sudo tailscale --socket=/run/tailscale-turimath/tailscaled.sock serve --bg 8601`. The Android app in `ops/mobile` opens this URL.
   - SSH tunnel: `ssh -N -L 8601:localhost:8601 <vm>`, then http://localhost:8601
 
 ## Posting rules for task turns

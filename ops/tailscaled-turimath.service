@@ -1,0 +1,14 @@
+[Unit]
+Description=Tailscale node "turimath" (userspace, second node on this VM; TuriChips keeps the system node)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/sbin/tailscaled --tun=userspace-networking --statedir=/var/lib/tailscale-turimath --socket=/run/tailscale-turimath/tailscaled.sock --port=41642
+RuntimeDirectory=tailscale-turimath
+StateDirectory=tailscale-turimath
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
