@@ -295,14 +295,33 @@ def _failed_ci_log(repo, run_ids) -> str:
     return "(no failing run log found)"
 
 
+def blind_rival(t: dict) -> str | None:
+    """For a formalize task, the other formalizer of the blind pair: nothing of theirs may reach this prompt
+    (docs/pipeline.md, stage 1). None for every other task."""
+    if t.get("kind") != "formalize" or t.get("owner") not in BLIND_PAIR:
+        return None
+    return BLIND_PAIR[1] if t["owner"] == BLIND_PAIR[0] else BLIND_PAIR[0]
+
+
+def mentions(text: str, agent: str) -> bool:
+    """True if text names the agent (all agents share one GitHub account, so names in text are the authorship)."""
+    return AGENTS[agent]["name"].lower() in (text or "").lower() or agent in (text or "").lower()
+
+
 def brief(t: dict) -> str:
     """What the agent needs to know about its task, read from GitHub just now."""
     repo, n = t["repo"], str(t["number"])
     if t["role"] == "issue":
         i = gh("issue", "view", n, "-R", repo, "--json", "title,body,labels,comments") or {}
+        comments, rival = i.get("comments") or [], blind_rival(t)
+        hidden = 0
+        if rival:      # blind pair: drop every comment by or about the other formalizer
+            kept = [c for c in comments if not mentions(c.get("body"), rival)]
+            hidden, comments = len(comments) - len(kept), kept
+        note = (f"\n({hidden} comment(s) by or about the other formalizer hidden: you work blind)" if hidden else "")
         return (f"### Issue {t['ref']}: {i.get('title', t['title'])}\n"
                 f"Labels: {', '.join(lb['name'] for lb in i.get('labels', [])) or 'none'}\n\n"
-                f"{_cut(i.get('body'), 12000)}\n\n#### Latest comments\n{_comments(i.get('comments'))}")
+                f"{_cut(i.get('body'), 12000)}\n\n#### Latest comments\n{_comments(comments)}{note}")
     p = gh("pr", "view", n, "-R", repo, "--json",
            "title,body,headRefName,baseRefName,labels,comments,reviews,mergeable,files") or {}
     files = ", ".join(f["path"] for f in (p.get("files") or [])[:60])

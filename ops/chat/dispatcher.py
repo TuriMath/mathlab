@@ -83,6 +83,16 @@ def board_text() -> str:
     return "\n".join(rows)
 
 
+def task_log(t: dict) -> list[dict]:
+    """The company-log slice for a task. A formalizer never sees the other formalizer's events (their handoffs
+    quote their statement), nor anything that names them: the blind pair has to stay blind."""
+    events = log.slice(t["ref"], t["repo"])
+    rival = tasks.blind_rival(t)
+    if rival:
+        events = [e for e in events if e.get("actor") != rival and not tasks.mentions(e.get("summary"), rival)]
+    return events
+
+
 def task_prompt(t: dict, where: str, brief: str, nudge: str = "") -> str:
     label = TASK_KINDS[t["kind"]]["label"]
     head = f"[task turn] {label}: {t['ref']} {t['title']}" if t["ref"] else f"[task turn] {label}"
@@ -93,7 +103,7 @@ def task_prompt(t: dict, where: str, brief: str, nudge: str = "") -> str:
         f"Working copy: {where}\n\n{why}"
         f"## Brief (read from GitHub just now)\n{brief}\n\n"
         f"## Last handoff on this task\n{t['handoff'] or '(first turn on this task)'}\n\n"
-        f"## Company log for this task\n{_log_lines(log.slice(t['ref'], t['repo']))}\n\n"
+        f"## Company log for this task\n{_log_lines(task_log(t))}\n\n"
         "Work this task as far as you can take it now; there is no turn limit. Follow the playbook for this kind "
         "of task and the rules in agents/_rules.md.\n\n"
         "End your reply with a handoff for whoever picks this task up next (it may be you in a fresh session), "
