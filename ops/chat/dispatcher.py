@@ -4,7 +4,9 @@ Loop (every POLL seconds):
 1. Read GitHub (tasks.snapshot) and sync the board. Merge approved + green PRs right here, with no LLM.
 2. If anything became ready, or TICK seconds passed, dispatch: ready tasks in priority order, one running task per
    persona, each on the seat seats.pick() gives it. Nothing ready means no Claude run at all.
-3. When the team is mostly out of work (and at most hourly), queue a `plan` task for the planner (Hilbert).
+3. Company state (see "Company state" below): when nothing has run or been ready for a while, one cheap Haiku
+   call (the supervisor) looks at the board and decides: wake tasks that can move, queue the planner (Hilbert),
+   or park in WAITING_ON_SAI, where no LLM runs at all until Sai speaks or GitHub moves.
 
 A task turn gets: the persona (company docs, rules, role file), the playbook for its kind, a brief read from GitHub
 just now, its last handoff and the company-log slice for its ref. It runs in the task's own worktree and keeps the
@@ -35,6 +37,7 @@ import seats
 import tasks
 import worktrees
 from config import AGENTS, DISPATCH, FACTORY, MODELS, PLANNER, RETRY_MODEL, SYSTEM, TASK_KINDS, WORKSPACE, env
+from router import ask_json
 from runner import _show, company_prompt, run_turn
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -80,12 +83,14 @@ def board_text() -> str:
     return "\n".join(rows)
 
 
-def task_prompt(t: dict, where: str, brief: str) -> str:
+def task_prompt(t: dict, where: str, brief: str, nudge: str = "") -> str:
     label = TASK_KINDS[t["kind"]]["label"]
     head = f"[task turn] {label}: {t['ref']} {t['title']}" if t["ref"] else f"[task turn] {label}"
+    why = (f"## Why you were woken\nNothing changed on GitHub; the supervisor thinks this task can move now: "
+           f"{nudge}\nIf it really can't, say exactly what blocks it and who can unblock it.\n\n") if nudge else ""
     return (
         f"{head}\nNobody messaged you: the dispatcher picked this task for you from the board.\n"
-        f"Working copy: {where}\n\n"
+        f"Working copy: {where}\n\n{why}"
         f"## Brief (read from GitHub just now)\n{brief}\n\n"
         f"## Last handoff on this task\n{t['handoff'] or '(first turn on this task)'}\n\n"
         f"## Company log for this task\n{_log_lines(log.slice(t['ref'], t['repo']))}\n\n"
@@ -102,8 +107,11 @@ def task_prompt(t: dict, where: str, brief: str) -> str:
 
 
 def plan_prompt() -> str:
+    hint = db.kv_get("plan_hint", "") or "nothing on the board can move."
     return (
-        "[task turn] Plan the queue\nThe dispatcher woke you because most of the team has nothing on the board.\n\n"
+        "[task turn] Plan the queue\nThe dispatcher woke you because the team is quiet. The supervisor's read: "
+        f"{hint}\nIf the next step waits on Sai's direction, look for real work that doesn't depend on it "
+        "(gate scripts, metadata, write-ups of verified theorems) before you call it IDLE.\n\n"
         f"## Board\n{board_text()}\n\n## Spec and ladder (vision.md on origin/main)\n{_show('vision.md')[:12000]}\n\n"
         f"## Recent company log\n{_log_lines(log.recent(30))}\n\n"
         f"Follow the plan playbook: keep 2-4 theorems in flight in {FACTORY['org']}/{FACTORY['work_repo']} "
@@ -166,7 +174,9 @@ async def run_task(t: dict, seat: str):
         else:
             wt, where = await asyncio.to_thread(worktrees.ensure, t)
             body = await asyncio.to_thread(tasks.brief, t)
-            cwd, prompt = wt, task_prompt(t, f"{wt} ({where})", body)
+            nudge = db.kv_get(f"nudge:{key}", "")
+            db.kv_set(f"nudge:{key}", "")
+            cwd, prompt = wt, task_prompt(t, f"{wt} ({where})", body, nudge)
             system = company_prompt(agent, _playbook(kind), where_section(t, f"{wt} ({where})"))
             disallowed = REVIEW_TOOLS_OFF if kind == "review" else BREAK_TOOLS_OFF if kind == "break" else None
             session, resume = (t["session_id"], True) if t["session_id"] else (str(uuid.uuid4()), False)
@@ -216,6 +226,10 @@ def finish(t, seat, model, session, resume, answer, ok):
         f.update(status="ready", next_at=now + DISPATCH["continue_gap_seconds"])
     else:
         f.update(status="waiting")
+    if kind == "DONE":
+        progress_made(key)
+    if not github:                       # the planner: in a row that filed nothing, stop asking it
+        db.kv_set("planner_idle", "0" if kind == "DONE" else str(int(db.kv_get("planner_idle", "0")) + 1))
     if kind == "DONE":
         db.add("work", agent, report)
     elif kind == "BLOCKED-SAI" and report != t["last_sai"]:
@@ -308,6 +322,7 @@ async def loop():
 async def poll():
     global _last_tick
     if paused():
+        set_state("paused", "Sai paused the dispatcher")
         return
     snap = await asyncio.to_thread(tasks.snapshot)
     if snap is None:
@@ -325,10 +340,10 @@ async def poll():
             what = await asyncio.to_thread(worktrees.remove, t, busy)
             if what in ("removed", "none"):
                 log.update(t["key"], info={**(t["info"] or {}), "cleaned": True})
-    maybe_plan()
     if changed or time.time() - _last_tick >= DISPATCH["tick_seconds"]:
         _last_tick = time.time()
         dispatch()
+    await supervise()
 
 
 def dispatch():
@@ -363,24 +378,200 @@ async def merge(pr):
         log.append("dispatcher", "merge-failed", f"{pr['ref']}: {out}", repo=pr["repo"], ref=pr["ref"])
 
 
-def maybe_plan():
-    now = time.time()
-    if now - float(db.kv_get("planner_last", "0") or 0) < DISPATCH["planner_gap_seconds"]:
-        return
-    active = {t["owner"] for t in log.tasks(("ready", "running"))}
-    idle = [a for a in AGENTS if a not in active and a not in running]
-    if len(idle) < DISPATCH["planner_idle_agents"]:
-        return
+def can_plan() -> bool:
+    if time.time() - float(db.kv_get("planner_last", "0") or 0) < DISPATCH["planner_gap_seconds"]:
+        return False
+    if int(db.kv_get("planner_idle", "0") or 0) >= DISPATCH["planner_idle_limit"]:
+        return False
     t = log.task(f"{PLANNER}:plan")
-    if t and t["status"] in ("ready", "running"):
-        return
-    db.kv_set("planner_last", str(now))
-    if t:
-        log.update(t["key"], status="ready", next_at=0, session_id=None, settle=0)
+    return not (t and t["status"] in ("ready", "running"))
+
+
+def queue_plan(why: str):
+    db.kv_set("planner_last", str(time.time()))
+    db.kv_set("plan_hint", why)
+    if log.task(f"{PLANNER}:plan"):
+        log.update(f"{PLANNER}:plan", status="ready", next_at=0, session_id=None, settle=0)
     else:
         log.create(f"{PLANNER}:plan", owner=PLANNER, role="plan", kind="plan", repo=f"{DISPATCH['org']}/{FACTORY['company_repo']}",
                    ref=None, number=0, title="Plan the queue", priority=TASK_KINDS["plan"]["priority"], info={})
-    log.append("dispatcher", "plan", f"{len(idle)} agents have nothing on the board; planner queued", actor=PLANNER)
+    log.append("dispatcher", "plan", f"planner queued: {why}", actor=PLANNER)
+
+
+# ---------- Company state ----------
+# One state for the whole company, recomputed every poll. Only QUIET spends an LLM call (Haiku, no tools).
+#
+#   paused          Sai ran /pause. Nothing launches.
+#   working         a turn is running, or a task is ready / due soon. The dispatcher handles it.
+#   throttled       tasks are ready but no seat may take them (weekly pace, 5-hour window, VM full). No LLM.
+#   quiet           nothing running or ready. After quiet_grace, the supervisor checks why:
+#                     work            -> wake the waiting tasks that can move           -> working
+#                     plan            -> queue the planner (Hilbert)                    -> working
+#                     waiting_on_sai  -> post the asks to #needs-sai once               -> waiting_on_sai
+#                     nothing         -> roadmap is empty, tell Sai                     -> idle
+#   waiting_on_sai  parked: no LLM at all. Leaves when Sai speaks (on_sai) or GitHub wakes a task.
+#   idle            like waiting_on_sai, for "nothing left to do". Same exits.
+#
+# Guards against the old IDLE-burn: a check that leads nowhere doubles the gap to the next one (15 min .. 4 h);
+# any DONE resets it. The supervisor can wake one task at most max_nudges times in a row without a DONE.
+PARKED = ("waiting_on_sai", "idle")
+
+
+def company_state() -> str:
+    return db.kv_get("company_state", "working")
+
+
+def set_state(new: str, why: str = ""):
+    old = company_state()
+    if new == old:
+        return
+    db.kv_set("company_state", new)
+    db.kv_set("company_state_why", why)
+    db.kv_set("company_state_since", str(time.time()))
+    log.append("dispatcher", "state", f"{old} -> {new}: {why}"[:500])
+    if new == "throttled" and time.time() - float(db.kv_get("throttle_posted", "0") or 0) > 6 * 3600:
+        db.kv_set("throttle_posted", str(time.time()))
+        db.add(NEEDS_SAI, SYSTEM["id"], f"🧊 Work is ready but nothing can launch: {why}. "
+               "It goes out by itself when a seat has room.")
+
+
+def progress_made(key: str | None = None):
+    """A DONE: the team is moving. Checks go back to their shortest gap; the task's nudge count resets."""
+    db.kv_set("check_gap", str(DISPATCH["check_min_seconds"]))
+    if key:
+        db.kv_set(f"nudges:{key}", "0")
+
+
+def on_sai():
+    """Sai said something (chat or a command). A parked company looks again a few minutes later."""
+    if company_state() in PARKED:
+        db.kv_set("next_check_at", str(time.time() + 5 * 60))
+        db.kv_set("quiet_since", "0")
+        set_state("quiet", "Sai spoke; checking again in 5 min")
+
+
+def _blocked_reason() -> str:
+    if seats.machine_full():
+        return "the VM is running its maximum number of turns"
+    if seats.throttled():
+        return "every seat is ahead of its weekly pace, so only urgent work (CI, conflicts, reviews) goes out"
+    why = ", ".join(f"{s['seat']}: {s['why']}" for s in map(seats.state, seats.POOL) if s["why"])
+    return f"no seat will take it ({why or 'no reason reported'})"
+
+
+async def supervise():
+    now = time.time()
+    if running:
+        db.kv_set("quiet_since", "0")
+        set_state("working", f"{len(running)} turn(s) running")
+        return
+    ready = log.tasks(("ready",))
+    if any(t["next_at"] <= now for t in ready):     # ready now: launch it (dispatch() may not have ticked yet)
+        db.kv_set("quiet_since", "0")
+        dispatch()
+        if running:
+            set_state("working", f"{len(running)} turn(s) running")
+            return
+        # dispatch() really couldn't launch any of it: no seat (or no VM slot) would take it
+        set_state("throttled", _blocked_reason())
+        return
+    if ready:                                       # a task continues shortly (continue_gap)
+        set_state("working", "a task continues shortly")
+        return
+    if company_state() == "working":                # the last turn just ended: start counting quiet time
+        db.kv_set("quiet_since", "0")
+        set_state("quiet", "nothing running or ready")
+    if company_state() in PARKED:                   # zero LLM until Sai speaks or GitHub wakes a task
+        return
+    quiet_since = float(db.kv_get("quiet_since", "0") or 0)
+    if not quiet_since:
+        db.kv_set("quiet_since", str(now))
+        set_state("quiet", "nothing running or ready")
+        return
+    if now - quiet_since < DISPATCH["quiet_grace_seconds"] or now < float(db.kv_get("next_check_at", "0") or 0):
+        return
+    await check(now)
+
+
+def _status_line(t) -> str:
+    e = log.last_turn(t["ref"], t["owner"])
+    return f"{e['kind'][5:].upper()}: {e['summary'][:300]}" if e else "(no turn yet)"
+
+
+def supervisor_prompt() -> str:
+    board = []
+    for t in log.tasks(("waiting",)):
+        nudges = int(db.kv_get(f"nudges:{t['key']}", "0") or 0)
+        board.append(f"- key={t['key']} · {AGENTS[t['owner']]['name']} · {TASK_KINDS[t['kind']]['label']} "
+                     f"{t['ref'] or ''} {t['title']}\n  last result: {_status_line(t)}\n"
+                     f"  handoff: {(t['handoff'] or '(none)')[:500]}"
+                     + ("\n  (already woken twice with no progress: don't pick it)" if nudges >= DISPATCH["max_nudges"] else ""))
+    sai_prs = "\n".join(f"- {p['ref']} {p['title']}" for p in sai_queue) or "(none)"
+    sai_said = "\n".join(f"- {datetime.fromtimestamp(e['ts'], IST):%d %b %H:%M}: {e['summary'][:300]}"
+                         for e in log.by_kind("sai", 6)) or "(nothing recent)"
+    plan_note = "" if can_plan() else "\nThe planner can't run right now (ran recently, or filed nothing twice in a row): don't answer plan.\n"
+    return (
+        f"You supervise {WORKSPACE}, {FACTORY['about']}. Sai is the only human (the operator). "
+        "Right now no agent is working and nothing is queued. Work out why, and what should happen next.\n"
+        f"Now: {datetime.now(IST):%a %d %b %H:%M IST}\n\n"
+        f"## Parked tasks (each waits until its GitHub item changes)\n{chr(10).join(board) or '(none)'}\n\n"
+        f"## PRs waiting on Sai's review\n{sai_prs}\n\n"
+        f"## What Sai said recently\n{sai_said}\n\n"
+        f"## Recent company log\n{_log_lines(log.recent(25))}\n{plan_note}\n"
+        "Decide one state:\n"
+        '- "work": one or more parked tasks can make real progress now without Sai (the blocker named in its '
+        "last result is gone, or its handoff has a next step nobody else must do first). Put their keys in wake.\n"
+        '- "plan": no parked task can move, but the roadmap clearly has more work that is not filed yet and '
+        f"doesn't depend on anything Sai still has to decide. The planner ({AGENTS[PLANNER]['name']}) will file it.\n"
+        '- "waiting_on_sai": the next real step on everything needs Sai (a review, a decision, access).\n'
+        '- "nothing": nothing is blocked on Sai and there is nothing sensible left to do.\n'
+        "Don't wake a task that ended IDLE or BLOCKED unless something has visibly changed for it since.\n\n"
+        'Answer with JSON only: {"state": "work|plan|waiting_on_sai|nothing", "wake": ["<key>", ...], '
+        '"sai": ["<one line per thing only Sai can do, with its ref>"], "why": "<one sentence>"}'
+    )
+
+
+async def check(now: float):
+    gap = float(db.kv_get("check_gap", str(DISPATCH["check_min_seconds"])) or DISPATCH["check_min_seconds"])
+    db.kv_set("next_check_at", str(now + gap))
+    db.kv_set("check_gap", str(min(gap * 2, DISPATCH["check_max_seconds"])))
+    d = await ask_json(supervisor_prompt())
+    if not isinstance(d, dict):
+        log.append("dispatcher", "check-failed", "supervisor gave no usable answer; trying again later")
+        return
+    state, why = str(d.get("state", "")), str(d.get("why", ""))[:400]
+    waiting = {t["key"]: t for t in log.tasks(("waiting",))}
+    wake = [k for k in d.get("wake") or []
+            if k in waiting and int(db.kv_get(f"nudges:{k}", "0") or 0) < DISPATCH["max_nudges"]]
+    log.append("dispatcher", "check", f"{state}: {why} (wake {', '.join(wake) or 'none'})")
+    if state == "work" and wake:
+        for k in wake:
+            db.kv_set(f"nudges:{k}", str(int(db.kv_get(f"nudges:{k}", "0") or 0) + 1))
+            db.kv_set(f"nudge:{k}", why)
+            log.update(k, status="ready", next_at=0)
+            log.append("dispatcher", "task-nudge", why, repo=waiting[k]["repo"], ref=waiting[k]["ref"],
+                       actor=waiting[k]["owner"])
+        set_state("working", f"supervisor woke {len(wake)} task(s): {why}")
+        dispatch()
+    elif state in ("work", "plan") and can_plan():
+        queue_plan(why)
+        set_state("working", f"planner queued: {why}")
+        dispatch()
+    elif state == "waiting_on_sai":
+        asks = [str(a)[:300] for a in d.get("sai") or []] or [why]
+        text = "\n".join(f"- {a}" for a in asks)
+        if text != db.kv_get("sai_asks", ""):
+            db.kv_set("sai_asks", text)
+            db.add(NEEDS_SAI, SYSTEM["id"], f"⏸️ **The team is waiting on you.** Nothing else can move until:\n"
+                   f"{text}\nI won't spend anything until you reply here or something changes on GitHub.")
+        set_state("waiting_on_sai", why)
+    elif state == "nothing" or (state == "plan" and int(db.kv_get("planner_idle", "0") or 0)
+                                >= DISPATCH["planner_idle_limit"]):
+        if company_state() != "idle":
+            db.add(NEEDS_SAI, SYSTEM["id"], f"💤 **The team has nothing to do** and nothing is waiting on you: "
+                   f"{why}\nTell us what's next (e.g. @igris) and we'll pick it up.")
+        set_state("idle", why)
+    # else: work it can't wake yet (nudge cap) or a planner that ran recently: stay quiet, look again later
 
 
 def sai_review_digest():
@@ -420,7 +611,13 @@ def status_text() -> str:
         ready = sum(t["status"] == "ready" for t in mine)
         waiting = sum(t["status"] == "waiting" for t in mine)
         rows.append(f"- **{v['name']}** · {now} · {ready} ready · {waiting} waiting")
-    return f"{head}\n\n" + "\n".join(rows) + "\n\n**Seats**\n" + seats.summary()
+    since = float(db.kv_get("company_state_since", "0") or 0)
+    state = (f"**Company:** `{company_state()}`"
+             + (f" since {datetime.fromtimestamp(since, IST):%d %b %H:%M IST}" if since else "")
+             + (f": {db.kv_get('company_state_why')}" if db.kv_get("company_state_why") else ""))
+    if company_state() == "waiting_on_sai" and db.kv_get("sai_asks"):
+        state += f"\n{db.kv_get('sai_asks')}"
+    return f"{head}\n{state}\n\n" + "\n".join(rows) + "\n\n**Seats**\n" + seats.summary()
 
 
 def command(text: str) -> str | None:
@@ -431,6 +628,9 @@ def command(text: str) -> str | None:
         return "⏸️ Dispatcher paused. Turns already running will finish. `/resume` to restart."
     if cmd == "/resume":
         db.kv_set("shift_paused", "0")
+        set_state("quiet", "Sai resumed the dispatcher")
+        db.kv_set("quiet_since", "0")
+        db.kv_set("next_check_at", "0")
         return "▶️ Dispatcher resumed. Ready tasks go out at the next poll."
     if cmd == "/status":
         return status_text()

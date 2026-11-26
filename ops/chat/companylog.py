@@ -65,6 +65,21 @@ def slice(ref=None, repo=None, n=15) -> list[dict]:
     return out
 
 
+def last_turn(ref, actor) -> dict | None:
+    """The last turn result (turn-done/-idle/-blocked/-blocked-sai/-failed) this agent had on this ref."""
+    with db.conn() as c:
+        q = "select * from events where actor=? and kind like 'turn-%' and kind<>'turn-start' and "
+        q += "ref is null " if ref is None else "ref=? "
+        r = c.execute(q + "order by id desc limit 1", (actor,) if ref is None else (actor, ref)).fetchone()
+    return dict(r) if r else None
+
+
+def by_kind(kind, n=5) -> list[dict]:
+    with db.conn() as c:
+        rows = c.execute("select * from events where kind=? order by id desc limit ?", (kind, n)).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
 def recent(n=50) -> list[dict]:
     with db.conn() as c:
         rows = c.execute("select * from events order by id desc limit ?", (n,)).fetchall()

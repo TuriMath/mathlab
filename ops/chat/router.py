@@ -41,17 +41,23 @@ async def pick(channel: str, text: str, context: str = "") -> list[str]:
         "If unclear: the architect.\n"
         'Answer with JSON only, like {"agents": ["hilbert", "euler"]}.'
     )
+    answer = await ask_json(prompt, timeout=60)
+    names = (answer or {}).get("agents", [])
+    picked = [a for a in AGENTS if a in {str(n).lower() for n in names}]
+    return picked or [ROUTER_DEFAULT]
+
+
+async def ask_json(prompt: str, timeout: int = 120) -> dict | None:
+    """One fast-model call (no tools) that answers with a JSON object. None if it failed or wasn't JSON."""
     await wait_turn()
     proc = await asyncio.create_subprocess_exec(
         CLAUDE, "-p", prompt, "--model", MODEL, "--output-format", "json", "--max-turns", "1",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, cwd="/tmp")
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=60)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         result = json.loads(out).get("result", "")
-        names = json.loads(re.search(r"\{.*\}", result, re.S).group(0)).get("agents", [])
-        picked = [a for a in AGENTS if a in {str(n).lower() for n in names}]
-        return picked or [ROUTER_DEFAULT]
+        return json.loads(re.search(r"\{.*\}", result, re.S).group(0))
     except Exception:
         if proc.returncode is None:
             proc.kill()
-        return [ROUTER_DEFAULT]
+        return None

@@ -115,6 +115,8 @@ async def post(m: NewMessage):
     msg = db.add(m.channel, MANAGER["id"], text, m.parent_id)
     log.append("chat", "sai", f"#{m.channel}: {text}", actor="sai")
     reply = shift.command(text)
+    if reply is None or not text.lower().startswith("/status"):
+        shift.on_sai()                   # a parked team takes another look once Sai has spoken
     if reply is not None:                # /pause, /resume, /status: answered by the scheduler, no agent runs
         db.add(m.channel, SYSTEM["id"], reply, m.parent_id)
         return msg

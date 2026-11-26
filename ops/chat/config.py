@@ -39,7 +39,13 @@ DISPATCH = {
     "tick_seconds": 5 * 60,          # dispatch at least this often even when nothing changed
     "continue_gap_seconds": 5 * 60,  # an issue task that ended DONE continues after this
     "planner_gap_seconds": 60 * 60,  # the planner (Hilbert) runs at most this often
-    "planner_idle_agents": 3,        # ...and only when at least this many agents have nothing ready or running
+    # Supervisor (dispatcher.py, "Company state"): when nothing is running or ready, one Haiku call decides
+    # whether work can move, the queue needs planning, or everything is waiting on Sai.
+    "quiet_grace_seconds": 10 * 60,  # nothing running or ready for this long: the team is quiet, check why
+    "check_min_seconds": 15 * 60,    # gap after a check that led nowhere; doubles each time...
+    "check_max_seconds": 4 * 3600,   # ...up to this. Any DONE resets it.
+    "max_nudges": 2,                 # the supervisor may wake one task this often in a row without a DONE
+    "planner_idle_limit": 2,         # planner turns in a row that filed nothing: stop planning, tell Sai
     "stall_seconds": 20 * 60,        # no output from a running turn for this long: warn in #needs-sai (never kill)
     "task_timeout_seconds": 6 * 3600,  # safety net only; long-horizon turns are the point
     "sai_digest_hour_ist": 10,       # daily list of open sai-review PRs in #needs-sai (should stay empty here)
@@ -60,14 +66,15 @@ BLIND_PAIR = ("noether", "gauss")     # formalizers: each is told never to read 
 
 # Seats: a shared pool, not one seat per agent. Any persona runs on any pool seat; the budget watcher
 # (seats.py) picks the seat with the most room against its weekly pace and keeps a buffer on every seat.
-POOL = [s for s in (env("POOL") or "seat1,seat2,seat3").split(",") if s]
+# Four seats, shared with TuriChips (same accounts): seat0 is Sai's own (CLAUDE_CODE_OAUTH_TOKEN), seat1-3 the team's.
+POOL = [s for s in (env("POOL") or "seat0,seat1,seat2,seat3").split(",") if s]
 WEEKLY_BUFFER = 0.08                 # never plan to use the last 8% of a seat's week
 FIVE_HOUR_CEILING = 0.95             # no new launches on a seat past this in its 5-hour window
 SEAT_MAX_RUNNING = 2                 # turns at once per seat (task + chat)
 MACHINE_MAX_RUNNING = int(env("MACHINE_MAX_RUNNING", "3"))   # turns at once on the whole VM; Lean builds are
                                      # memory-heavy (Mathlib), so keep this low on small machines
 AHEAD_OF_PACE = 0.10                 # every seat this far ahead of weekly pace: only urgent work goes out
-CHAT_FALLBACK_SEAT = "seat0"         # chat with Sai still works when the whole pool is out
+CHAT_FALLBACK_SEAT = "seat0"         # chat with Sai still works when the whole pool is out (past the buffer)
 
 # Models are picked per task kind, not per agent.
 MODELS = {"opus": "claude-opus-5-5", "sonnet": "claude-sonnet-5-5", "haiku": "claude-haiku-5-5"}
@@ -94,7 +101,7 @@ PLANNER = "hilbert"
 SYSTEM = {"id": "shift", "name": "Shift", "role": "Scheduler", "color": "#475569"}
 
 # Seats outside the pool that the Usage tab still tracks, with the label shown in place of agent names.
-USAGE_ONLY_SEATS = {"seat0": "Sai + router"}
+USAGE_ONLY_SEATS = {"seat4": "shared outside the company, no agents"}
 
 # The personas. Every agent also gets a direct-message channel: dm-<id>.
 # Seat tokens are CLAUDE_TOKEN_<SEAT> in the env file (a seat without one falls back to CLAUDE_CODE_OAUTH_TOKEN).
