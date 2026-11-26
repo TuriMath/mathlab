@@ -123,7 +123,7 @@ function setView(view) {   // "chat", "office" or "usage"
 function openView(view) {
   S.current = null;
   $("app").classList.remove("nav-open");
-  $("title").textContent = view === "office" ? "🏢 Office" : "📊 Usage";
+  $("title").textContent = view === "office" ? "🛋️ Office" : "📊 Usage";
   closeThread();
   setView(view);
   renderSidebar();

@@ -46,7 +46,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 
 /* Office view */
 #view-list { margin-top: 6px; }
-.office { flex: 1; min-height: 0; background: #120d22; position: relative; }
+.office { flex: 1; min-height: 0; background: #1a110b; position: relative; }
 .office canvas { display: block; }
 
 /* Main and thread panes */

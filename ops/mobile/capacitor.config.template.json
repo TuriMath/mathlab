@@ -6,5 +6,5 @@
     "url": "__CHAT_URL__",
     "errorPath": "offline.html"
   },
-  "android": { "backgroundColor": "#000000" }
+  "android": { "backgroundColor": "#1a1d21" }
 }

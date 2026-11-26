@@ -19,4 +19,4 @@ from `CHAT_URL` or a local, gitignored `.chat-url` file.
   ```
   The output is `android/app/build/outputs/apk/debug/app-debug.apk`.
 - Install with `adb install -r <apk>` over USB, or copy the APK to the phone and open it.
-- **Icons and splash** are generated from the Infinity Lotus logo (`ops/chat/static/brand/logo-1024.png`) on black.
+- **Icons and splash** are generated from the Infinity Lotus logo (`ops/chat/static/brand/logo-1024.png`, transparent) on the app background `#1a1d21`.
