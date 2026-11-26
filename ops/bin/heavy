@@ -3,7 +3,7 @@
 # Usage: heavy <command...>     e.g.  heavy lake build    heavy lake exe cache get
 # Waits for any other heavy job to finish, then runs at low CPU/IO priority.
 # Wrap: full `lake build` of the project, Mathlib cache downloads, anything that needs several GB of RAM.
-LOCK="${FACTORY_HEAVY_LOCK:-/tmp/factory-heavy.lock}"
+LOCK="${FACTORY_HEAVY_LOCK:-/tmp/turimath-heavy.lock}"
 if ! flock -n "$LOCK" true 2>/dev/null; then
   echo "heavy: another heavy job is running; waiting for it to finish..." >&2
 fi

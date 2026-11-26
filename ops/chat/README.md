@@ -20,10 +20,16 @@ A minimal Slack-style app for talking to the agents. The UI is for reading and c
 - **Scripts:** `python post.py <channel> <author> "text"` posts a message, for example from scheduled standups.
 
 ## Run on the VM
-- Config in `/home/turimath/.turimath.env` (never committed): `CLAUDE_CODE_OAUTH_TOKEN=…` (operator seat, router), `CLAUDE_TOKEN_SEAT1=…` to `CLAUDE_TOKEN_SEAT4=…`, `MAX_PARALLEL_AGENTS=4`
+
+TuriMath shares the TuriChips VM as its own unix user, `turimath`. Everything per factory (chat DB, traces, `~/repos`, `~/tasks`, `~/work`) lives in that user's home, so the two factories don't touch each other.
+
+- Config in `/home/turimath/.turimath.env` (never committed, mode 600): `CLAUDE_CODE_OAUTH_TOKEN=…` (operator seat, router), `CLAUDE_TOKEN_SEAT1=…` to `CLAUDE_TOKEN_SEAT4=…` (the same accounts TuriChips uses today), `GH_TOKEN=…`, `MAX_PARALLEL_AGENTS=4`, `FACTORY_MACHINE_MAX_RUNNING=1` (3 after the VM upgrade).
+- Toolchain for `turimath`: Claude Code in `~/.local/bin`, `heavy` (from `ops/bin`) in `~/.local/bin`, elan in `~/.elan/bin`, the app's venv in `~/venv`. Git identity `TuriMath Agents <agents@turimath.invalid>`; `gh` is the git credential helper.
+- **Mathlib once:** `~/repos/theorems` is primed with `heavy lake exe cache get`. Every task worktree links its `.lake/packages` to that copy (`worktrees.share_lake`), so Mathlib is on disk once, not once per task.
 - Install the unit: `sudo cp factory-chat.service /etc/systemd/system/turimath-chat.service`, then `sudo systemctl enable --now turimath-chat`. Logs: `journalctl -u turimath-chat -f`
-- The app listens on `127.0.0.1:8600` only. Open it through an SSH tunnel:
-  `ssh -N -L 8600:localhost:8600 <vm>`, then go to http://localhost:8600
+- The app listens on `127.0.0.1:8601` only (TuriChips has 8600). Two ways in:
+  - Tailscale (web and phone): `sudo tailscale serve --bg --https=8443 8601`, then `https://<vm tailnet name>:8443`. The Android app in `ops/mobile` opens this URL.
+  - SSH tunnel: `ssh -N -L 8601:localhost:8601 <vm>`, then http://localhost:8601
 
 ## Posting rules for task turns
 

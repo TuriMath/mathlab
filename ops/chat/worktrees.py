@@ -116,6 +116,22 @@ def _add(repo, *args):
     r = _git("worktree", "add", "-q", *args, cwd=repo)
     if r.returncode != 0:
         raise RuntimeError(f"worktree add failed: {r.stderr.strip()[-300:]}")
+    share_lake(repo, Path(args[-2]))   # every caller passes ... <path> <commit-ish>, so the path is second to last
+
+
+def share_lake(repo: Path, wt: Path) -> None:
+    """Lean repos: point the worktree's .lake/packages at the clone's, so Mathlib (about 7 GB unpacked) exists
+    once on disk instead of once per task. Safe because the Mathlib pin never changes inside a task (_rules.md,
+    rule 10); `.lake/` is gitignored, so the link never shows up as a change. No-op for non-Lean repos or when the
+    clone hasn't been primed (`heavy lake exe cache get` in ~/repos/<repo>)."""
+    shared = repo / ".lake" / "packages"
+    if not (wt / "lakefile.lean").exists() or not shared.is_dir():
+        return
+    link = wt / ".lake" / "packages"
+    if link.exists() or link.is_symlink():
+        return
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(shared)
 
 
 def remove(t: dict, busy: set[str] = frozenset()) -> str:

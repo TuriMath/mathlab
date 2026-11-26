@@ -1,0 +1,10 @@
+{
+  "appId": "in.turilabs.turimath",
+  "appName": "TuriMath",
+  "webDir": "www",
+  "server": {
+    "url": "__CHAT_URL__",
+    "errorPath": "offline.html"
+  },
+  "android": { "backgroundColor": "#1a1d21" }
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">TuriMath</string>
+    <string name="title_activity_main">TuriMath</string>
+    <string name="package_name">in.turilabs.turimath</string>
+    <string name="custom_url_scheme">in.turilabs.turimath</string>
+</resources>

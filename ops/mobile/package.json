@@ -1,0 +1,16 @@
+{
+  "name": "turimath-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Android app shell for the TuriMath chat (Capacitor). Loads the chat from the VM over Tailscale.",
+  "scripts": {
+    "configure": "node configure.js",
+    "sync": "node configure.js && cap sync android",
+    "apk": "node configure.js && cap sync android && cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  }
+}
