@@ -66,8 +66,10 @@ BLIND_PAIR = ("noether", "gauss")     # formalizers: each is told never to read 
 
 # Seats: a shared pool, not one seat per agent. Any persona runs on any pool seat; the budget watcher
 # (seats.py) picks the seat with the most room against its weekly pace and keeps a buffer on every seat.
-# Four seats, shared with TuriChips (same accounts): seat0 is Sai's own (CLAUDE_CODE_OAUTH_TOKEN), seat1-3 the team's.
-POOL = [s for s in (env("POOL") or "seat0,seat1,seat2,seat3").split(",") if s]
+# The seats are split with TuriChips (same accounts, same VM): seat2 is TuriMath's own, seat1 TuriChips' own,
+# seat0 (Sai's, CLAUDE_CODE_OAUTH_TOKEN) and seat3 are shared by both. Each factory sees the shared seats' real
+# usage (it comes back with every run), so neither plans on room the other has taken.
+POOL = [s for s in (env("POOL") or "seat0,seat2,seat3").split(",") if s]
 WEEKLY_BUFFER = 0.08                 # never plan to use the last 8% of a seat's week
 FIVE_HOUR_CEILING = 0.95             # no new launches on a seat past this in its 5-hour window
 SEAT_MAX_RUNNING = 2                 # turns at once per seat (task + chat)
@@ -101,7 +103,7 @@ PLANNER = "hilbert"
 SYSTEM = {"id": "shift", "name": "Shift", "role": "Scheduler", "color": "#475569"}
 
 # Seats outside the pool that the Usage tab still tracks, with the label shown in place of agent names.
-USAGE_ONLY_SEATS = {"seat4": "shared outside the company, no agents"}
+USAGE_ONLY_SEATS = {"seat1": "TuriChips' seat", "seat4": "shared outside the company, no agents"}
 
 # The personas. Every agent also gets a direct-message channel: dm-<id>.
 # Seat tokens are CLAUDE_TOKEN_<SEAT> in the env file (a seat without one falls back to CLAUDE_CODE_OAUTH_TOKEN).
