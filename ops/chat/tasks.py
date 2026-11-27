@@ -116,10 +116,29 @@ def verify(repo: str, number: int, pr_ref: str) -> bool:
 
 
 def theorem_of_branch(repo_full: str, branch: str) -> int | None:
-    """The theorem issue a prover branch belongs to: `<agent>/<repo>-<n>` in the work repo."""
+    """The issue number a prover branch belongs to: `<agent>/<repo>-<n>` in any factory repo (the work repo or a
+    per-theorem repo). Whether that issue is a theorem issue is checked by the caller (`is_theorem_issue`)."""
     name = repo_full.split("/")[1]
     m = re.fullmatch(rf"\w+/{re.escape(name)}-(\d+)", branch or "")
-    return int(m.group(1)) if m and name == FACTORY["work_repo"] else None
+    return int(m.group(1)) if m else None
+
+
+def is_theorem_issue(repo: str, number: int) -> bool:
+    """True if the issue is a `Theorem: ...` issue, so infra branches like `euler/theorems-8` never move stages."""
+    i = gh("issue", "view", str(number), "-R", repo, "--json", "title") or {}
+    return bool(THEOREM_TITLE.match(i.get("title") or ""))
+
+
+_labelled: set[str] = set()
+
+
+def ensure_labels(repo: str) -> None:
+    """A repo created from the template has only GitHub's default labels. Copy the pipeline labels from the work
+    repo once per process (`gh label clone` skips labels that already exist)."""
+    if repo in _labelled or repo.split("/")[1] == FACTORY["work_repo"]:
+        return
+    if gh("label", "clone", f"{ORG}/{FACTORY['work_repo']}", "-R", repo, json_out=False) is not None:
+        _labelled.add(repo)
 
 
 def author_of_pr(pr) -> str | None:
@@ -172,6 +191,7 @@ def snapshot() -> dict | None:
             return None                  # a partial read would close tasks that still exist
         for i in issues:
             if THEOREM_TITLE.match(i["title"]):
+                ensure_labels(full)
                 theorem_tasks(full, i, found, advance)
                 continue
             owner = owner_of_issue(i)

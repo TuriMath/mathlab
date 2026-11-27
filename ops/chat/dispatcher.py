@@ -299,7 +299,7 @@ async def advance(a):
 async def after_merge(pr):
     """equiv PR merged -> stage:prove (statement locked); proof PR merged -> verified, issue closed."""
     n = tasks.theorem_of_branch(pr["repo"], pr.get("branch"))
-    if n is None:
+    if n is None or not await asyncio.to_thread(tasks.is_theorem_issue, pr["repo"], n):
         return
     labels = await asyncio.to_thread(tasks.issue_labels, pr["repo"], n)
     ref = f"{pr['repo']}#{n}"
