@@ -124,8 +124,8 @@ def plan_prompt() -> str:
         "(gate scripts, metadata, write-ups of verified theorems) before you call it IDLE.\n\n"
         f"## Board\n{board_text()}\n\n## Spec and ladder (vision.md on origin/main)\n{_show('vision.md')[:12000]}\n\n"
         f"## Recent company log\n{_log_lines(log.recent(30))}\n\n"
-        f"Follow the plan playbook: keep 2-4 theorems in flight in {FACTORY['org']}/{FACTORY['work_repo']} "
-        "(issues 'Theorem: <name>' from docs/theorem-issue.md), and ask Sai only for direction when a phase gate "
+        f"Follow the plan playbook: keep about 6 theorems in flight, each in its own repo {FACTORY['org']}/<kebab-slug> "
+        f"made from {FACTORY['org']}/theorem-template (issues 'Theorem: <name>' from docs/theorem-issue.md), and ask Sai only for direction when a phase gate "
         "has passed. Don't invent busywork; if nothing sensible is left, say so.\n\n"
         "End with:\nHANDOFF:\n<what you queued and why>\nDONE: <issues opened, with refs>  or  IDLE"
     )

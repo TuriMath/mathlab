@@ -116,10 +116,12 @@ def verify(repo: str, number: int, pr_ref: str) -> bool:
 
 
 def theorem_of_branch(repo_full: str, branch: str) -> int | None:
-    """The theorem issue a prover branch belongs to: `<agent>/<repo>-<n>` in the work repo."""
+    """The issue a prover branch belongs to: `<agent>/<repo>-<n>`, in any repo of the org (each theorem lives in
+    its own repo, theorems#8). Callers act only if that issue carries a `stage:*` label, so a branch for a plain
+    issue (mathlab, the site) changes nothing."""
     name = repo_full.split("/")[1]
     m = re.fullmatch(rf"\w+/{re.escape(name)}-(\d+)", branch or "")
-    return int(m.group(1)) if m and name == FACTORY["work_repo"] else None
+    return int(m.group(1)) if m else None
 
 
 def author_of_pr(pr) -> str | None:

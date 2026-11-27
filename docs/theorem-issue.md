@@ -1,6 +1,6 @@
 # Theorem issue template
 
-Hilbert opens one issue per theorem in `TuriMath/theorems`.
+Hilbert opens one issue per theorem, in that theorem's own repo `TuriMath/<kebab-slug>` (made from `TuriMath/theorem-template`; see `agents/scout.md`).
 
 **Title:** `Theorem: <common name>`
 **Labels:** `theorem`, `tier:<n>`, `stage:formalize` (and `budget:<n>` only to override the defaults: equiv 4, prove 6)
