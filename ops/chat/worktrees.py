@@ -8,6 +8,7 @@ A branch lives in one worktree only: the PR an issue task opened reuses the issu
 check one branch out twice), and a worktree is never removed while an active task still works on its branch.
 When the task is done the worktree is removed, unless it holds uncommitted or unpushed work.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -120,18 +121,47 @@ def _add(repo, *args):
 
 
 def share_lake(repo: Path, wt: Path) -> None:
-    """Lean repos: point the worktree's .lake/packages at the clone's, so Mathlib (about 7 GB unpacked) exists
-    once on disk instead of once per task. Safe because the Mathlib pin never changes inside a task (_rules.md,
-    rule 10); `.lake/` is gitignored, so the link never shows up as a change. No-op for non-Lean repos or when the
-    clone hasn't been primed (`heavy lake exe cache get` in ~/repos/<repo>)."""
-    shared = repo / ".lake" / "packages"
-    if not (wt / "lakefile.lean").exists() or not shared.is_dir():
+    """Lean repos: point the worktree's .lake/packages at a primed copy, so Mathlib (about 7 GB unpacked) exists
+    once on disk instead of once per task. The repo's own clone is used when it is primed; otherwise any primed
+    clone in ~/repos with the same pin (lean-toolchain + every package rev in lake-manifest.json), since each
+    theorem lives in its own repo and only ~/repos/theorems is primed (`heavy lake exe cache get`). Safe because
+    the pin never changes inside a task (_rules.md, rule 10); `.lake/` is gitignored, so the link never shows up
+    as a change. No-op for non-Lean repos, or when no primed copy has this pin (a real Mathlib upgrade)."""
+    if not (wt / "lakefile.lean").exists():
         return
     link = wt / ".lake" / "packages"
     if link.exists() or link.is_symlink():
         return
+    shared = primed_packages(wt, prefer=repo)
+    if shared is None:
+        return
     link.parent.mkdir(parents=True, exist_ok=True)
     link.symlink_to(shared)
+
+
+def _pin(project: Path) -> tuple | None:
+    """A Lean project's toolchain and package revs, or None if it has no readable manifest."""
+    try:
+        manifest = json.loads((project / "lake-manifest.json").read_text())
+        toolchain = (project / "lean-toolchain").read_text().strip()
+    except (OSError, ValueError):
+        return None
+    return toolchain, tuple(sorted((p.get("name"), p.get("rev")) for p in manifest.get("packages", [])))
+
+
+def primed_packages(project: Path, prefer: Path | None = None) -> Path | None:
+    """A real (not linked) .lake/packages in ~/repos whose pin matches the project's, `prefer`'s clone first."""
+    pin = _pin(project)
+    if pin is None:
+        return None
+    candidates = [prefer] if prefer else []
+    if REPOS.is_dir():
+        candidates += sorted(REPOS.iterdir())
+    for clone_dir in candidates:
+        packages = clone_dir / ".lake" / "packages"
+        if packages.is_dir() and not packages.is_symlink() and _pin(clone_dir) == pin:
+            return packages
+    return None
 
 
 def remove(t: dict, busy: set[str] = frozenset()) -> str:

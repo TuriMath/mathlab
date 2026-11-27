@@ -34,6 +34,8 @@ The dispatcher reads GitHub every 2 minutes and keeps a task board. Each theorem
 
 **Big builds go through `heavy`.** Mathlib is big. Use `lake exe cache get` before any build (never build Mathlib from source), and prefix full builds with `heavy`, e.g. `heavy lake build`. Building one file (`lake env lean Theorems/<Slug>/Proof.lean`) doesn't need it.
 
+**Mathlib is on disk once.** Your task's working copy already links `.lake/packages` to the shared Mathlib (about 7 GB), so `lake exe cache get` there costs nothing. Never `git clone` a repo into `~/tasks` or anywhere else yourself: the dispatcher makes working copies. If you truly need a clone of your own, run `ln -s ~/repos/theorems/.lake/packages .lake/packages` in it before any `lake` command; that is safe while its `lean-toolchain` and Mathlib rev match `theorems` (rule 10). A clone that downloads its own Mathlib fills the machine's disk and stops the whole factory.
+
 **End every task turn with a handoff and one status line:**
 ```
 HANDOFF:
